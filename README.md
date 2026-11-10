@@ -19,7 +19,8 @@ Il robottino cammina, saluta, pensa mentre lavora e si addormenta quando non lo 
 - GNOME Shell **50**
 - **[Claude Code](https://claude.com/claude-code) installato nel terminale**: è lui il "cervello" del robottino,
   senza non funziona. Serve un abbonamento Claude (Pro o Max) oppure un account della Console Anthropic.
-- Per la voce (facoltativa): Python 3 con `venv`, `curl`, PipeWire (`pw-record`) e circa 1 GB di spazio
+- Per la voce (facoltativa): Python 3 con il modulo `venv` (su Ubuntu/Debian: `sudo apt install python3-venv`),
+  `curl`, PipeWire (`pw-record`) e circa 1 GB di spazio
 
 ### Installare Claude Code
 
