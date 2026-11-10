@@ -1,0 +1,12 @@
+# file generato da glib-compile-schemas
+schemas/gschemas.compiled
+
+# Python
+__pycache__/
+*.pyc
+
+# backup ed editor
+*~
+*.bak
+*.swp
+*.prima-della-*

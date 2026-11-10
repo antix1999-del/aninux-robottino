@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.robottino" path="/org/gnome/shell/extensions/robottino/">
+    <key name="open-assistant" type="as">
+      <default><![CDATA[['<Super>space']]]></default>
+      <summary>Scorciatoia per aprire Aninux</summary>
+    </key>
+    <key name="model" type="s">
+      <default>'sonnet'</default>
+      <summary>Modello Claude da usare (es. sonnet, opus, haiku; vuoto = predefinito)</summary>
+    </key>
+    <key name="listen-assistant" type="as">
+      <default><![CDATA[['<Control><Super>space']]]></default>
+      <summary>Scorciatoia per parlare ad Aninux (apre il riquadro e accende il microfono)</summary>
+    </key>
+    <key name="voice-replies" type="s">
+      <choices>
+        <choice value="voce"/>
+        <choice value="sempre"/>
+        <choice value="mai"/>
+      </choices>
+      <default>'voce'</default>
+      <summary>Quando rispondere a voce: voce = solo se gli parli, sempre, mai</summary>
+    </key>
+  </schema>
+</schemalist>
