@@ -17,9 +17,28 @@ Il robottino cammina, saluta, pensa mentre lavora e si addormenta quando non lo 
 ## Requisiti
 
 - GNOME Shell **50**
-- [Claude Code](https://claude.com/claude-code) installato e con accesso già fatto (`claude` nel `PATH`
-  oppure in `~/.local/bin/claude`)
+- **[Claude Code](https://claude.com/claude-code) installato nel terminale**: è lui il "cervello" del robottino,
+  senza non funziona. Serve un abbonamento Claude (Pro o Max) oppure un account della Console Anthropic.
 - Per la voce (facoltativa): Python 3 con `venv`, `curl`, PipeWire (`pw-record`) e circa 1 GB di spazio
+
+### Installare Claude Code
+
+Se non ce l'hai ancora, installalo dal terminale:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+Poi controlla che funzioni e fai l'accesso con il tuo account (lo puoi fare anche dopo,
+dalle impostazioni del robottino → *Account Claude* → *Accedi…*):
+
+```bash
+claude --version
+claude auth login
+```
+
+Il robottino cerca il programma `claude` in `~/.local/bin/claude` e nel `PATH`;
+se l'hai installato altrove, indica il percorso nelle impostazioni.
 
 ## Installazione
 
@@ -51,14 +70,31 @@ Scarica in `~/.local/share/aninux-robottino/voce` la voce italiana *Paola* di Pi
 | `Super` + `Spazio` | apre il riquadro di Aninux |
 | `Ctrl` + `Super` + `Spazio` | apre il riquadro e accende il microfono |
 
-Dalle impostazioni dell'estensione puoi cambiare le scorciatoie, il modello Claude
-(sonnet, opus, haiku) e quando rispondere a voce (*solo se gli parli*, *sempre*, *mai*).
+## Impostazioni
+
+Si aprono dal pulsante ⚙ nel riquadro del robottino, oppure dall'app *Estensioni* o con
+`gnome-extensions prefs robottino@aninux`.
+
+**Generale**
+- **Nome**: come si chiama il tuo robottino (di serie *Aninux*). Compare nel riquadro, nelle notifiche
+  e nel modo in cui si presenta.
+- **Modello**: Haiku (veloce), Sonnet (equilibrato), Opus (il più intelligente) o il predefinito di Claude Code.
+- **Risposte a voce**: solo se gli parli, sempre, mai.
+- **Scorciatoie**: per aprire il riquadro e per parlargli.
+
+**Account Claude**
+- Mostra con quale account sei collegato, con i pulsanti **Accedi…** e **Esci**.
+- **Cartella del profilo**: ogni cartella è un account Claude Code separato. Vuoto = quello normale (`~/.claude`).
+  Per usare un secondo account (per esempio quello di lavoro o dell'università) scegli una cartella nuova,
+  come `~/.claude-lavoro`, e premi *Accedi…*.
+- **Percorso di claude**: da indicare solo se il robottino non trova Claude Code da solo.
 
 ## Come funziona
 
 - `extension.js` – l'indicatore nella barra, il riquadro della chat e le animazioni. Avvia
   `claude -p` in modalità `stream-json` e riprende la stessa sessione tra un messaggio e l'altro.
   Le azioni (aprire app, siti, file) arrivano da Claude come righe `[[AZIONE: {...}]]` in fondo alla risposta.
+- `prefs.js` – la finestra delle impostazioni (nome, modello, voce, scorciatoie, account Claude).
 - `permission-bridge.py` – piccolo server MCP che inoltra a GNOME, via D-Bus, le richieste di permesso
   di Claude Code, così puoi accettarle o rifiutarle dal riquadro.
 - `voce.py` – processo in background per parlare (Piper) e ascoltare (faster-whisper), comandato via stdin/stdout in JSON.

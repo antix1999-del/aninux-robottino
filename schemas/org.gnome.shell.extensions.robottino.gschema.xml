@@ -22,5 +22,17 @@
       <default>'voce'</default>
       <summary>Quando rispondere a voce: voce = solo se gli parli, sempre, mai</summary>
     </key>
+    <key name="bot-name" type="s">
+      <default>'Aninux'</default>
+      <summary>Nome del robottino</summary>
+    </key>
+    <key name="claude-path" type="s">
+      <default>''</default>
+      <summary>Percorso del programma claude (vuoto = lo cerco da solo)</summary>
+    </key>
+    <key name="claude-config-dir" type="s">
+      <default>''</default>
+      <summary>Cartella del profilo di Claude Code, cioè l'account da usare (vuoto = ~/.claude)</summary>
+    </key>
   </schema>
 </schemalist>

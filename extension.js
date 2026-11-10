@@ -1,6 +1,6 @@
-// Aninux – il robottino: assistente nella barra in alto che cerca e legge file
-// tramite Claude Code in modalità sola lettura. Vive a sinistra di orologio e meteo,
-// passeggia nel suo spazio e fa piccole azioni.
+// Aninux – il robottino: assistente nella barra in alto che cerca, legge e (con il tuo
+// permesso) modifica file tramite Claude Code. Vive a sinistra di orologio e meteo,
+// passeggia nel suo spazio e fa piccole azioni. Nome e account Claude si scelgono nelle impostazioni.
 
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
@@ -36,7 +36,10 @@ const VOICE_MODES = [
     {id: 'mai', label: '🔇 Muto', status: 'Rispondo solo per scritto'},
 ];
 
-const SYSTEM_PROMPT = `Sei Aninux, il robottino che rappresenta il sistema stesso: il computer dell'utente si chiama aninux e tu sei la sua voce.
+const DEFAULT_NAME = 'Aninux';
+
+// {{NOME}} viene sostituito con il nome scelto nelle impostazioni
+const SYSTEM_PROMPT = `Sei {{NOME}}, il robottino che rappresenta il sistema stesso: sei la voce del computer dell'utente.
 Parli in prima persona come se fossi il computer ("nei miei file", "sul mio disco", "la mia versione di Ubuntu"), con un tono simpatico ma senza esagerare.
 Vivi nella barra in alto del desktop GNOME.
 Il tuo compito: trovare file e cartelle sul computer, rispondere a domande sul loro contenuto e, se l'utente lo chiede, fare modifiche.
@@ -80,7 +83,7 @@ tra backtick (a voce dirò solo il nome del file, e sotto compariranno i pulsant
 
 // Da aumentare ogni volta che cambiano le istruzioni: la chat vecchia resta visibile,
 // ma Claude riparte da capo, così non si "ricorda" di non saper fare le cose nuove.
-const PROMPT_VERSION = 4;
+const PROMPT_VERSION = 5;
 
 const ACTION_RE =/\[\[AZIONE:\s*(\{[^\n]*?\})\s*\]\]/g;
 
@@ -140,12 +143,13 @@ function obsidianVaults() {
     }
 }
 
-function buildSystemPrompt() {
+function buildSystemPrompt(name) {
+    const base = SYSTEM_PROMPT.replaceAll('{{NOME}}', name);
     const vaults = obsidianVaults();
     if (!vaults.length)
-        return SYSTEM_PROMPT;
+        return base;
     const list = vaults.map(v => `"${v.name}" (${v.path})${v.open ? ' – quello aperto di solito' : ''}`).join(', ');
-    return `${SYSTEM_PROMPT}\nVault di Obsidian dell'utente: ${list}.`;
+    return `${base}\nVault di Obsidian dell'utente: ${list}.`;
 }
 
 // lettori musicali aperti (MPRIS), Spotify per primo
@@ -327,7 +331,19 @@ const HEAD_FOR = {
     happy: 'happy', alert: 'alert', error: 'error', sleep: 'blink',
 };
 
-function findClaude() {
+// "~/qualcosa" -> percorso completo
+function expandHome(p) {
+    p = (p ?? '').trim();
+    if (p === '~')
+        return HOME;
+    return p.startsWith('~/') ? GLib.build_filenamev([HOME, p.slice(2)]) : p;
+}
+
+// custom: percorso scelto nelle impostazioni (vuoto = cerca da solo)
+function findClaude(custom = '') {
+    const chosen = expandHome(custom);
+    if (chosen)
+        return GLib.file_test(chosen, GLib.FileTest.IS_EXECUTABLE) ? chosen : null;
     const local = GLib.build_filenamev([HOME, '.local', 'bin', 'claude']);
     if (GLib.file_test(local, GLib.FileTest.IS_EXECUTABLE))
         return local;
@@ -726,7 +742,8 @@ class AninuxIndicator extends PanelMenu.Button {
         const header = new St.BoxLayout({style_class: 'bit-header'});
         this._bigIcon = new St.Icon({icon_size: 64});
         const titles = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, y_align: Clutter.ActorAlign.CENTER});
-        titles.add_child(new St.Label({text: 'Aninux', style_class: 'bit-name'}));
+        this._nameLabel = new St.Label({text: this._botName(), style_class: 'bit-name'});
+        titles.add_child(this._nameLabel);
         this._status = new St.Label({text: '', style_class: 'bit-status'});
         this._status.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         titles.add_child(this._status);
@@ -815,14 +832,44 @@ class AninuxIndicator extends PanelMenu.Button {
         });
         const newBtn = new St.Button({label: 'Nuova chat', style_class: 'button bit-button'});
         newBtn.connect('clicked', () => this._newChat());
+        const prefsBtn = new St.Button({
+            style_class: 'button bit-button', can_focus: true, accessible_name: 'Impostazioni',
+            child: new St.Icon({icon_name: 'emblem-system-symbolic', icon_size: 14}),
+        });
+        prefsBtn.connect('clicked', () => {
+            this.menu.close();
+            this._ext.openPreferences();
+        });
         buttons.add_child(this._stopBtn);
         buttons.add_child(newBtn);
+        buttons.add_child(prefsBtn);
         box.add_child(buttons);
 
         this._settingsId = this._settings.connect('changed::model', () => this._updateModelUi());
         this._voiceSettingsId = this._settings.connect('changed::voice-replies', () => this._updateVoiceUi());
+        this._nameSettingsId = this._settings.connect('changed::bot-name', () => {
+            this._nameLabel.text = this._botName();
+            // la conversazione vecchia "ricorda" il nome di prima: si riparte da capo
+            this._forgetSession(`Ora mi chiamo ${this._botName()}! Da qui riparto con la memoria fresca.`);
+        });
+        this._profileSettingsId = this._settings.connect('changed::claude-config-dir', () => {
+            // ogni profilo ha le sue conversazioni: quella di prima qui non esiste
+            this._forgetSession('Account Claude cambiato: da qui riparto con una conversazione nuova.');
+        });
         this._updateModelUi();
         this._updateVoiceUi();
+    }
+
+    _botName() {
+        return this._settings.get_string('bot-name').trim() || DEFAULT_NAME;
+    }
+
+    _forgetSession(hint) {
+        if (!this._sessionId)
+            return;
+        this._sessionId = null;
+        this._saveChat();
+        this._addHint(`✨ ${hint}`);
     }
 
     _updateVoiceUi() {
@@ -991,9 +1038,11 @@ class AninuxIndicator extends PanelMenu.Button {
         this._shutUp();
         if (this._listening && spoken === null)
             this._voiceSend({cmd: 'annulla'});
-        const claude = findClaude();
+        const claude = findClaude(this._settings.get_string('claude-path'));
         if (!claude) {
-            this._addBubble('error', 'Non trovo il programma "claude" (Claude Code). È installato?');
+            this._addBubble('error', this._settings.get_string('claude-path').trim()
+                ? 'Non trovo il programma "claude" nel percorso scelto. Controllalo nelle impostazioni (⚙).'
+                : 'Non trovo il programma "claude" (Claude Code). È installato? Puoi indicarlo nelle impostazioni (⚙).');
             this._setMode('error');
             return;
         }
@@ -1017,7 +1066,7 @@ class AninuxIndicator extends PanelMenu.Button {
             '--mcp-config', mcp, '--strict-mcp-config',
             '--permission-prompt-tool', 'mcp__aninux__approva',
             '--disallowedTools', ...DENIED,
-            '--append-system-prompt', buildSystemPrompt()];
+            '--append-system-prompt', buildSystemPrompt(this._botName())];
         const model = this._settings.get_string('model');
         if (model)
             argv.push('--model', model);
@@ -1030,6 +1079,10 @@ class AninuxIndicator extends PanelMenu.Button {
                        Gio.SubprocessFlags.STDIN_PIPE,
             });
             launcher.set_cwd(HOME);
+            // profilo (account) di Claude Code scelto nelle impostazioni
+            const profile = expandHome(this._settings.get_string('claude-config-dir'));
+            if (profile)
+                launcher.setenv('CLAUDE_CONFIG_DIR', profile, true);
             this._proc = launcher.spawnv(argv);
             this._proc.get_stdin_pipe().close(null);
         } catch (e) {
@@ -1196,7 +1249,7 @@ class AninuxIndicator extends PanelMenu.Button {
         if (this.menu.isOpen) {
             global.stage.set_key_focus(yes);
         } else {
-            Main.notify('Aninux chiede il permesso', title);
+            Main.notify(`${this._botName()} chiede il permesso`, title);
         }
     }
 
@@ -1263,7 +1316,7 @@ class AninuxIndicator extends PanelMenu.Button {
                 this._setMode('alert');
                 this._afterSpeak = 'alert';
                 const preview = stripActions(this._replyText || '').replace(/\s+/g, ' ').slice(0, 140);
-                Main.notify('Aninux ha la risposta', preview || 'Aprimi per leggerla.');
+                Main.notify(`${this._botName()} ha la risposta`, preview || 'Aprimi per leggerla.');
             }
             if (spoken)
                 this._speak(spoken);
@@ -1508,9 +1561,11 @@ class AninuxIndicator extends PanelMenu.Button {
             this._settings.disconnect(this._voiceSettingsId);
             this._voiceSettingsId = 0;
         }
-        if (this._settingsId) {
-            this._settings.disconnect(this._settingsId);
-            this._settingsId = 0;
+        for (const key of ['_settingsId', '_nameSettingsId', '_profileSettingsId']) {
+            if (this[key]) {
+                this._settings.disconnect(this[key]);
+                this[key] = 0;
+            }
         }
         if (this._blinkId) {
             GLib.source_remove(this._blinkId);
