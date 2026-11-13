@@ -15,6 +15,7 @@ const MODELS = [
     {id: 'haiku', label: 'Haiku – il più veloce'},
     {id: 'sonnet', label: 'Sonnet – equilibrato'},
     {id: 'opus', label: 'Opus – il più intelligente'},
+    {id: 'qwen', label: 'Qwen – locale, offline (Ollama)'},
 ];
 
 const VOICE_MODES = [
@@ -138,6 +139,33 @@ export default class AninuxPreferences extends ExtensionPreferences {
         claude.add(comboRow('Risposte a voce', 'Serve la voce installata (installa-voce.sh)',
             VOICE_MODES, settings, 'voice-replies'));
         page.add(claude);
+
+        // istruzioni personali: lo stesso file che riempi dicendo "ricordati che…"
+        const istrFile = GLib.build_filenamev([GLib.get_user_data_dir(), 'aninux-robottino', 'istruzioni.md']);
+        const istr = new Adw.PreferencesGroup({
+            title: 'Istruzioni personali',
+            description: 'Cose che il robottino deve sapere o come deve comportarsi (valgono per Qwen e per Claude). ' +
+                'Puoi anche dirgli in chat «ricordati che…», «dimenticati che…» o «cosa ricordi?».',
+        });
+        const istrRow = new Adw.ActionRow({title: 'Modifica le istruzioni', subtitle: shortHome(istrFile)});
+        const istrBtn = new Gtk.Button({label: 'Apri', valign: Gtk.Align.CENTER});
+        istrBtn.connect('clicked', () => {
+            try {
+                if (!GLib.file_test(istrFile, GLib.FileTest.EXISTS)) {
+                    GLib.mkdir_with_parents(GLib.path_get_dirname(istrFile), 0o700);
+                    GLib.file_set_contents(istrFile, '# Istruzioni per il robottino\n' +
+                        '# Scrivi qui cosa deve sapere o come deve comportarsi: una cosa per riga, con "- " davanti.\n' +
+                        '# Valgono per Qwen e per Claude. Le righe che iniziano con # sono commenti.\n\n');
+                }
+                Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(istrFile).get_uri(), null);
+            } catch (e) {
+                istrRow.subtitle = `Non riesco ad aprirlo: ${e.message}`;
+            }
+        });
+        istrRow.add_suffix(istrBtn);
+        istrRow.activatable_widget = istrBtn;
+        istr.add(istrRow);
+        page.add(istr);
 
         const keys = new Adw.PreferencesGroup({
             title: 'Scorciatoie',

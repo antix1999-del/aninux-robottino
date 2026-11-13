@@ -23,6 +23,9 @@ const MAX_SAVED = 80;
 
 const STAGE_W = 150;          // larghezza dello spazio nella barra
 const SPRITE = 26;            // altezza del robottino nella barra
+const BIG_SPRITE = 56;        // altezza del robottino dentro la Dynamic Island
+const RECENT_FILE = GLib.build_filenamev([DATA_DIR, 'app-recenti.json']);
+const MAX_APPS = 4;           // icone delle app recenti nella Dynamic Island
 const SLEEP_AFTER_MS = 5 * 60 * 1000;
 
 // voce: servizio Python (Piper + Whisper) installato da installa-voce.sh
@@ -144,12 +147,84 @@ function obsidianVaults() {
 }
 
 function buildSystemPrompt(name) {
-    const base = SYSTEM_PROMPT.replaceAll('{{NOME}}', name);
+    let base = SYSTEM_PROMPT.replaceAll('{{NOME}}', name);
     const vaults = obsidianVaults();
-    if (!vaults.length)
-        return base;
-    const list = vaults.map(v => `"${v.name}" (${v.path})${v.open ? ' – quello aperto di solito' : ''}`).join(', ');
-    return `${base}\nVault di Obsidian dell'utente: ${list}.`;
+    if (vaults.length) {
+        const list = vaults.map(v => `"${v.name}" (${v.path})${v.open ? ' – quello aperto di solito' : ''}`).join(', ');
+        base = `${base}\nVault di Obsidian dell'utente: ${list}.`;
+    }
+    const mine = instructionLines().map(l => `- L'utente ti ha detto: «${l.replace(/^\s*-\s*/, '')}»`).join('\n');
+    if (mine)
+        base = `${base}\n\nISTRUZIONI DELL'UTENTE, scritte da lui in prima persona con "ricordati che…": "io", "sono", "mi" = l'UTENTE; "tu", "ti" = TE, il robottino. Seguile sempre.\n${mine}`;
+    return base;
+}
+
+// ---------- istruzioni personali (stesso file usato da qwen-agent.py) ----------
+const ISTR_FILE = GLib.build_filenamev([DATA_DIR, 'istruzioni.md']);
+const ISTR_HEADER = `# Istruzioni per il robottino
+# Scrivi qui cosa deve sapere o come deve comportarsi: una cosa per riga, con "- " davanti.
+# Valgono per Qwen e per Claude. Le righe che iniziano con # sono commenti.
+# Puoi anche dirgli in chat "ricordati che ...", "dimenticati che ..." o "cosa ricordi?".
+`;
+
+function readIstrFile() {
+    try {
+        const [ok, bytes] = GLib.file_get_contents(ISTR_FILE);
+        return ok ? new TextDecoder().decode(bytes) : '';
+    } catch (_e) {
+        return '';
+    }
+}
+
+function instructionLines() {
+    return readIstrFile().split('\n').map(l => l.trimEnd()).filter(l => l.trim() && !l.trimStart().startsWith('#'));
+}
+
+const memWords = t => (t.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .match(/[a-z0-9]{4,}/g) ?? []).filter(w => !['ricordati', 'dimenticati', 'sempre', 'quando'].includes(w));
+
+const REMEMBER_RE = /^\s*(?:🎤\s*)?(?:ok|ehi|senti)?[\s,]*(?:ricordati|ricorda|tieni a mente|memorizza|impara)\s+(?:che\s+|di\s+)?([\s\S]+)$/i;
+const FORGET_RE = /^\s*(?:🎤\s*)?(?:ok|ehi|senti)?[\s,]*(?:dimenticati|dimentica|scordati)\s+(?:che\s+|di\s+)?([\s\S]+)$/i;
+const RECALL_RE = /^\s*(?:🎤\s*)?(?:che\s+)?cosa\s+(?:ti\s+)?(?:ricordi|sai di me)(?:\s+di me)?\s*[?.!]*\s*$/i;
+
+// "ricordati che…", "dimenticati che…", "cosa ricordi?": risposta immediata, senza modello. null = non è un comando.
+function handleMemory(q) {
+    let m = q.match(REMEMBER_RE);
+    if (m) {
+        let fact = m[1].trim().replace(/[.!]+$/, '').trim();
+        fact = fact.charAt(0).toUpperCase() + fact.slice(1);
+        GLib.mkdir_with_parents(DATA_DIR, 0o700);
+        const old = readIstrFile();
+        const text = `${old || `${ISTR_HEADER}\n`}${old && !old.endsWith('\n') ? '\n' : ''}- ${fact}\n`;
+        GLib.file_set_contents(ISTR_FILE, text);
+        return `Ok, me lo ricordo: "${fact}" ✍️`;
+    }
+    m = q.match(FORGET_RE);
+    if (m) {
+        const target = new Set(memWords(m[1]));
+        const gone = [];
+        const keep = readIstrFile().split('\n').filter(l => {
+            if (!l.trim() || l.trimStart().startsWith('#') || !target.size)
+                return true;
+            const common = memWords(l).filter(w => target.has(w)).length;
+            if (common >= Math.max(1, Math.ceil(target.size / 2))) {
+                gone.push(l.replace(/^\s*-\s*/, '').trim());
+                return false;
+            }
+            return true;
+        });
+        if (!gone.length)
+            return 'Non avevo niente di simile tra le cose da ricordare.';
+        GLib.file_set_contents(ISTR_FILE, keep.join('\n'));
+        return `Fatto, ho dimenticato: ${gone.map(g => `"${g}"`).join('; ')}`;
+    }
+    if (RECALL_RE.test(q)) {
+        const lines = instructionLines();
+        return lines.length
+            ? `Ecco cosa mi ricordo:\n${lines.join('\n')}`
+            : 'Per ora non ho niente da ricordare. Dimmi "ricordati che …" e lo imparo.';
+    }
+    return null;
 }
 
 // lettori musicali aperti (MPRIS), Spotify per primo
@@ -323,13 +398,9 @@ const MODELS = [
     {id: 'haiku', label: 'Haiku', desc: 'il più veloce'},
     {id: 'sonnet', label: 'Sonnet', desc: 'equilibrato'},
     {id: 'opus', label: 'Opus', desc: 'il più intelligente'},
+    {id: 'qwen', label: 'Qwen', desc: 'locale, offline'},
 ];
-
-// espressione del corpo -> icona della testa grande
-const HEAD_FOR = {
-    idle: 'idle', blink: 'blink', think1: 'think1', think2: 'think2',
-    happy: 'happy', alert: 'alert', error: 'error', sleep: 'blink',
-};
+const isLocal = model => model === 'qwen';
 
 // "~/qualcosa" -> percorso completo
 function expandHome(p) {
@@ -431,8 +502,29 @@ class AninuxIndicator extends PanelMenu.Button {
 
         this._buildStage();
         this._buildPopup();
+        this._setupIsland();
+        this._setupRecentApps();
         this._loadChat();
         this._setMode('idle');
+
+        // prepara subito tutte le pose, così camminando non deve caricare niente
+        this._preloadId = GLib.idle_add(GLib.PRIORITY_LOW, () => {
+            this._preloadId = 0;
+            const cur = [this._sprite._shown, this._bigSprite?._shown];
+            for (const pose of ['stand', 'walk1', 'walk2', 'jump', 'sit', 'wave']) {
+                for (const expr of ['idle', 'blink', 'think1', 'think2', 'happy', 'alert', 'error', 'sleep']) {
+                    for (const box of [this._sprite, this._bigSprite]) {
+                        if (box && !box._frames[`body-${pose}-${expr}`]) {
+                            this._showFrame(box, `body-${pose}-${expr}`);
+                        }
+                    }
+                }
+            }
+            this._showFrame(this._sprite, cur[0]);
+            if (this._bigSprite)
+                this._showFrame(this._bigSprite, cur[1]);
+            return GLib.SOURCE_REMOVE;
+        });
 
         // piccolo ciclo che fa sbattere le palpebre
         this._blinkId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3700, () => {
@@ -458,18 +550,129 @@ class AninuxIndicator extends PanelMenu.Button {
             y_align: Clutter.ActorAlign.CENTER,
             style_class: 'aninux-stage',
         });
-        this._sprite = new St.Icon({icon_size: SPRITE});
+        this._sprite = this._spriteBox(SPRITE);
         this._sprite.set_pivot_point(0.5, 0.5);
         this._stage.add_child(this._sprite);
         this._x = (STAGE_W - SPRITE) / 2;
         this._sprite.translation_x = this._x;
-        this.add_child(this._stage);
+        // la "pillola" nera nella barra: la Dynamic Island da chiusa
+        this._pill = new St.Bin({
+            style_class: 'aninux-pill', child: this._stage,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this.add_child(this._pill);
+    }
+
+    // ---------- apertura stile "Dynamic Island" ----------
+    // il riquadro nasce dalla pillola e si allarga con un rimbalzo, poi ci rientra
+    _setupIsland() {
+        const bp = this.menu._boxPointer;
+        if (!bp)
+            return;
+        this.menu.actor.add_style_class_name('aninux-island');
+        // la Dynamic Island prende lo stesso colore della barra (anche se cambi tema)
+        this._panelStyleId = Main.panel.connect('style-changed', () => this._syncIslandColor());
+        this._syncIslandColor();
+        const content = this._popupBox;
+        const GAP = 6; // distanza tra barra e riquadro (-arrow-rise)
+
+        // dimensioni della pillola rispetto al riquadro aperto
+        const pillState = () => {
+            let [pw, ph] = this._pill.get_transformed_size();
+            if (!pw || !ph)
+                [pw, ph] = [STAGE_W + 16, SPRITE];
+            const [, natW] = bp.get_preferred_width(-1);
+            const [, natH] = bp.get_preferred_height(natW);
+            return {
+                scale_x: Math.min(1, pw / Math.max(natW, 1)),
+                scale_y: Math.min(1, ph / Math.max(natH, 1)),
+                translation_y: -((Main.panel.height + ph) / 2 + GAP),
+            };
+        };
+
+        bp.open = (animate, onComplete) => {
+            bp.remove_all_transitions();
+            content.remove_all_transitions();
+            bp._muteKeys = false;
+            bp.translation_x = 0;
+            bp.set_pivot_point(0.5, 0);
+
+            if (!animate) {
+                Object.assign(bp, {opacity: 255, scale_x: 1, scale_y: 1, translation_y: 0});
+                content.opacity = 255;
+                bp.show();
+                bp._muteInput = false;
+                onComplete?.();
+                return;
+            }
+
+            const from = pillState();
+            Object.assign(bp, from, {opacity: 0});
+            content.opacity = 0;
+            bp.show();
+
+            bp.ease({opacity: 255, duration: 90, mode: Clutter.AnimationMode.LINEAR});
+            bp.ease({
+                translation_y: 0, scale_x: 1,
+                duration: 380, mode: Clutter.AnimationMode.EASE_OUT_BACK,
+            });
+            bp.ease({
+                scale_y: 1, delay: 40,
+                duration: 460, mode: Clutter.AnimationMode.EASE_OUT_BACK,
+                onComplete: () => {
+                    bp._muteInput = false;
+                    onComplete?.();
+                },
+            });
+            content.ease({
+                opacity: 255, delay: 180,
+                duration: 220, mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
+        };
+
+        bp.close = (animate, onComplete) => {
+            if (!bp.visible)
+                return;
+            bp._muteInput = true;
+            bp._muteKeys = true;
+            bp.remove_all_transitions();
+            content.remove_all_transitions();
+
+            const done = () => {
+                bp.hide();
+                Object.assign(bp, {opacity: 0, scale_x: 1, scale_y: 1, translation_x: 0, translation_y: 0});
+                content.opacity = 255;
+                onComplete?.();
+            };
+            if (!animate) {
+                done();
+                return;
+            }
+
+            const to = pillState();
+            bp.set_pivot_point(0.5, 0);
+            content.ease({opacity: 0, duration: 110, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            bp.ease({
+                scale_y: to.scale_y,
+                duration: 260, mode: Clutter.AnimationMode.EASE_IN_OUT_CUBIC,
+            });
+            bp.ease({
+                opacity: 0,
+                duration: 300, mode: Clutter.AnimationMode.EASE_IN_QUAD,
+            });
+            bp.ease({
+                scale_x: to.scale_x, translation_y: to.translation_y, delay: 40,
+                duration: 280, mode: Clutter.AnimationMode.EASE_IN_OUT_CUBIC,
+                onComplete: done,
+            });
+        };
     }
 
     _render() {
-        this._sprite.gicon = this._icon(`body-${this._pose}-${this._expr}`);
-        if (this._bigIcon)
-            this._bigIcon.gicon = this._icon(`bit-${HEAD_FOR[this._expr] ?? 'idle'}`);
+        const name = `body-${this._pose}-${this._expr}`;
+        this._showFrame(this._sprite, name);
+        if (this._bigSprite)
+            this._showFrame(this._bigSprite, name);
     }
 
     _setPose(p) {
@@ -480,6 +683,36 @@ class AninuxIndicator extends PanelMenu.Button {
     _setExpr(e) {
         this._expr = e;
         this._render();
+    }
+
+    // il robottino è un contenitore con un'immagine per ogni posa: cambiare posa
+    // vuol dire mostrarne una e nascondere l'altra, senza ricaricare l'SVG
+    _spriteBox(size) {
+        const box = new St.Widget({
+            layout_manager: new Clutter.FixedLayout(), width: size, height: size,
+        });
+        box._frames = {};
+        box._shown = null;
+        box._size = size;
+        return box;
+    }
+
+    _showFrame(box, name) {
+        if (box._shown === name)
+            return;
+        // si usa l'opacità (non show/hide): così cambiare posa non fa ricalcolare
+        // la disposizione della barra e di tutto il riquadro, solo ridisegnare
+        let f = box._frames[name];
+        if (!f) {
+            f = new St.Icon({gicon: this._icon(name), icon_size: box._size, opacity: 0});
+            box._frames[name] = f;
+            box.add_child(f);
+        }
+        f.opacity = 255;
+        const old = box._frames[box._shown];
+        if (old)
+            old.opacity = 0;
+        box._shown = name;
     }
 
     _icon(name) {
@@ -586,10 +819,6 @@ class AninuxIndicator extends PanelMenu.Button {
             return;
         }
         const next = () => this._after(rand(2500, 7000), () => this._idleLoop());
-        if (this.menu.isOpen) {
-            next();
-            return;
-        }
         const r = Math.random();
         if (r < 0.40) {
             this._walkTo(rand(0, STAGE_W - SPRITE), rand(18, 30), next);
@@ -712,6 +941,8 @@ class AninuxIndicator extends PanelMenu.Button {
         if (!open)
             return;
         this._poke();
+        this._syncIslandColor();
+        this._refreshRecentApps();
         this._voiceEnsure(false); // prepara la voce mentre scrivi
         if (this._mode === 'listening' || this._mode === 'speaking') {
             // sta già facendo qualcosa: lascialo fare
@@ -738,17 +969,36 @@ class AninuxIndicator extends PanelMenu.Button {
         });
         item.add_child(box);
         this.menu.addMenuItem(item);
+        this._popupBox = box;
 
-        const header = new St.BoxLayout({style_class: 'bit-header'});
-        this._bigIcon = new St.Icon({icon_size: 64});
-        const titles = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, y_align: Clutter.ActorAlign.CENTER});
-        this._nameLabel = new St.Label({text: this._botName(), style_class: 'bit-name'});
+        const header = new St.BoxLayout({style_class: 'bit-header', orientation: Clutter.Orientation.VERTICAL});
+
+        // la "pista" dove il robottino passeggia dentro la Dynamic Island:
+        // copia i movimenti del robottino nella barra, in grande
+        this._bigStage = new St.Widget({
+            layout_manager: new Clutter.FixedLayout(),
+            style_class: 'bit-robot-stage', x_expand: true, height: BIG_SPRITE + 6,
+        });
+        this._bigSprite = this._spriteBox(BIG_SPRITE);
+        this._bigSprite.set_pivot_point(0.5, 0.5);
+        this._bigStage.add_child(this._bigSprite);
+        const mirror = () => this._mirrorSprite();
+        for (const sig of ['notify::translation-x', 'notify::translation-y', 'notify::scale-x'])
+            this._sprite.connect(sig, mirror);
+        this._bigStage.connect('notify::width', mirror);
+        header.add_child(this._bigStage);
+
+        const titles = new St.BoxLayout({style_class: 'bit-titles', x_expand: true});
+        this._nameLabel = new St.Label({text: this._botName(), style_class: 'bit-name', y_align: Clutter.ActorAlign.CENTER});
         titles.add_child(this._nameLabel);
-        this._status = new St.Label({text: '', style_class: 'bit-status'});
+        this._status = new St.Label({text: '', style_class: 'bit-status', x_expand: true, y_align: Clutter.ActorAlign.CENTER});
         this._status.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         titles.add_child(this._status);
-        header.add_child(this._bigIcon);
         header.add_child(titles);
+
+        // le app usate di recente: un clic e si aprono
+        this._appsRow = new St.BoxLayout({style_class: 'bit-apps', x_align: Clutter.ActorAlign.CENTER});
+        header.add_child(this._appsRow);
         box.add_child(header);
 
         this._chat = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, style_class: 'bit-chat', x_expand: true});
@@ -845,7 +1095,16 @@ class AninuxIndicator extends PanelMenu.Button {
         buttons.add_child(prefsBtn);
         box.add_child(buttons);
 
-        this._settingsId = this._settings.connect('changed::model', () => this._updateModelUi());
+        this._lastModel = this._settings.get_string('model');
+        this._settingsId = this._settings.connect('changed::model', () => {
+            this._updateModelUi();
+            const m = this._settings.get_string('model');
+            if (isLocal(m) !== isLocal(this._lastModel))
+                this._forgetSession(isLocal(m)
+                    ? 'Ora penso con Qwen, qui sul computer: riparto con la memoria fresca.'
+                    : 'Torno a pensare con Claude: riparto con la memoria fresca.');
+            this._lastModel = m;
+        });
         this._voiceSettingsId = this._settings.connect('changed::voice-replies', () => this._updateVoiceUi());
         this._nameSettingsId = this._settings.connect('changed::bot-name', () => {
             this._nameLabel.text = this._botName();
@@ -972,8 +1231,143 @@ class AninuxIndicator extends PanelMenu.Button {
     }
 
     _setStatus(text) {
-        if (this._status)
+        this._statusText = text;
+        if (this._status && !this._hoverApp)
             this._status.text = text;
+    }
+
+    // ---------- il robottino grande nella Dynamic Island ----------
+    _mirrorSprite() {
+        if (!this._bigSprite)
+            return;
+        const room = Math.max(0, this._bigStage.width - BIG_SPRITE);
+        const frac = this._sprite.translation_x / Math.max(1, STAGE_W - SPRITE);
+        this._bigSprite.translation_x = frac * room;
+        this._bigSprite.translation_y = 3 + this._sprite.translation_y * (BIG_SPRITE / SPRITE);
+        this._bigSprite.scale_x = this._sprite.scale_x;
+    }
+
+    // colore della barra -> colore della Dynamic Island
+    _syncIslandColor() {
+        try {
+            const node = Main.panel.get_theme_node();
+            const bg = node.get_background_color();
+            const fg = node.get_foreground_color();
+            // se la barra è trasparente, l'isola resta comunque leggibile
+            const a = bg.alpha < 128 ? 1 : bg.alpha / 255;
+            const bgCss = bg.alpha < 10 ? 'rgb(0,0,0)' : `rgba(${bg.red},${bg.green},${bg.blue},${a.toFixed(3)})`;
+            this.menu.box.style = `background-color: ${bgCss}; color: rgb(${fg.red},${fg.green},${fg.blue});`;
+        } catch (e) {
+            // la barra non ha ancora uno stile: riproviamo alla prossima apertura
+        }
+    }
+
+    // ---------- app recenti ----------
+    _setupRecentApps() {
+        this._recentIds = [];
+        try {
+            const [ok, bytes] = GLib.file_get_contents(RECENT_FILE);
+            if (ok) {
+                const list = JSON.parse(new TextDecoder().decode(bytes));
+                if (Array.isArray(list))
+                    this._recentIds = list.filter(x => typeof x === 'string');
+            }
+        } catch (_e) {}
+
+        // ogni volta che passi a un'app, la mette in cima alla lista
+        const tracker = Shell.WindowTracker.get_default();
+        this._focusAppId = tracker.connect('notify::focus-app', () => {
+            const app = tracker.focus_app;
+            if (!app || app.is_window_backed())
+                return;
+            const id = app.get_id();
+            if (!id || this._recentIds[0] === id)
+                return;
+            this._recentIds = [id, ...this._recentIds.filter(x => x !== id)].slice(0, 20);
+            this._saveRecentSoon();
+        });
+    }
+
+    _saveRecentSoon() {
+        if (this._recentSaveId)
+            return;
+        this._recentSaveId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+            this._recentSaveId = 0;
+            try {
+                GLib.mkdir_with_parents(DATA_DIR, 0o700);
+                GLib.file_set_contents(RECENT_FILE, JSON.stringify(this._recentIds));
+            } catch (_e) {}
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _recentApps() {
+        const appSys = Shell.AppSystem.get_default();
+        const out = [];
+        const seen = new Set();
+        const add = app => {
+            if (!app || out.length >= MAX_APPS)
+                return;
+            const id = app.get_id();
+            if (seen.has(id) || (app.get_app_info && !app.get_app_info()?.should_show()))
+                return;
+            seen.add(id);
+            out.push(app);
+        };
+        for (const id of this._recentIds)
+            add(appSys.lookup_app(id));
+        // se la lista è corta, la completa con le app che usi di più
+        for (const app of Shell.AppUsage.get_default().get_most_used())
+            add(app);
+        return out;
+    }
+
+    _refreshRecentApps() {
+        if (!this._appsRow)
+            return;
+        this._appsRow.destroy_all_children();
+        this._hoverApp = null;
+        for (const app of this._recentApps()) {
+            const btn = new St.Button({
+                style_class: 'bit-app', can_focus: true, reactive: true,
+                child: app.create_icon_texture(32),
+            });
+            btn.connect('notify::hover', () => {
+                if (btn.hover) {
+                    this._hoverApp = app;
+                    this._status.text = app.get_name();
+                    this._walkToApp(btn);
+                } else if (this._hoverApp === app) {
+                    this._hoverApp = null;
+                    this._status.text = this._statusText ?? '';
+                }
+            });
+            btn.connect('clicked', () => {
+                this._hoverApp = null;
+                this.menu.close();
+                app.activate();
+            });
+            this._appsRow.add_child(btn);
+        }
+    }
+
+    // passando sopra un'icona, il robottino ci corre sotto e la indica
+    _walkToApp(btn) {
+        if (this._mode !== 'idle' || !this._bigStage.width)
+            return;
+        const [sx] = this._bigStage.get_transformed_position();
+        const [bx] = btn.get_transformed_position();
+        const room = Math.max(1, this._bigStage.width - BIG_SPRITE);
+        const target = bx + btn.width / 2 - sx - BIG_SPRITE / 2;
+        const barX = Math.max(0, Math.min(1, target / room)) * (STAGE_W - SPRITE);
+        this._clearTimers();
+        this._walkTo(barX, 90, () => {
+            this._setPose('wave');
+            this._after(rand(2500, 4000), () => {
+                this._setPose('stand');
+                this._idleLoop();
+            });
+        });
     }
 
     // ---------- memoria della chat ----------
@@ -1038,8 +1432,10 @@ class AninuxIndicator extends PanelMenu.Button {
         this._shutUp();
         if (this._listening && spoken === null)
             this._voiceSend({cmd: 'annulla'});
-        const claude = findClaude(this._settings.get_string('claude-path'));
-        if (!claude) {
+        const model = this._settings.get_string('model');
+        const local = isLocal(model);
+        const claude = local ? null : findClaude(this._settings.get_string('claude-path'));
+        if (!local && !claude) {
             this._addBubble('error', this._settings.get_string('claude-path').trim()
                 ? 'Non trovo il programma "claude" nel percorso scelto. Controllalo nelle impostazioni (⚙).'
                 : 'Non trovo il programma "claude" (Claude Code). È installato? Puoi indicarlo nelle impostazioni (⚙).');
@@ -1053,12 +1449,33 @@ class AninuxIndicator extends PanelMenu.Button {
             this._entry.text = '';
         this._addBubble('user', q);
 
+        // "ricordati che…" e simili: risponde subito, con qualsiasi modello
+        let mem = null;
+        try {
+            mem = handleMemory(q);
+        } catch (e) {
+            mem = `Non riesco a salvare le istruzioni: ${e.message}`;
+        }
+        if (mem) {
+            this._addBubble('bot', mem);
+            this._setMode('happy');
+            const vmode = this._settings.get_string('voice-replies');
+            if (vmode === 'sempre' || (vmode === 'voce' && this._voiceQuestion))
+                this._speak(speechText(mem));
+            return;
+        }
+
         // ponte dei permessi: ogni modifica o comando passa da "Accetta / Rifiuta"
         const bridge = this._ext.dir.get_child('permission-bridge.py').get_path();
         const python = GLib.find_program_in_path('python3') ?? '/usr/bin/python3';
         const mcp = JSON.stringify({mcpServers: {aninux: {command: python, args: ['-I', bridge]}}});
 
-        const argv = [claude, '-p', q,
+        // Claude e Qwen non condividono la memoria: ognuno ha le sue sessioni
+        if (this._sessionId && this._sessionId.startsWith('qwen-') !== local)
+            this._sessionId = null;
+
+        const argv = local ? [python, '-I', this._ext.dir.get_child('qwen-agent.py').get_path(),
+            '--domanda', q, '--nome', this._botName(), '--sessione', this._sessionId ?? ''] : [claude, '-p', q,
             '--output-format', 'stream-json', '--verbose',
             '--tools', 'Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash',
             '--add-dir', '/',
@@ -1067,10 +1484,9 @@ class AninuxIndicator extends PanelMenu.Button {
             '--permission-prompt-tool', 'mcp__aninux__approva',
             '--disallowedTools', ...DENIED,
             '--append-system-prompt', buildSystemPrompt(this._botName())];
-        const model = this._settings.get_string('model');
-        if (model)
+        if (!local && model)
             argv.push('--model', model);
-        if (this._sessionId)
+        if (!local && this._sessionId)
             argv.push('--resume', this._sessionId);
 
         try {
@@ -1087,7 +1503,7 @@ class AninuxIndicator extends PanelMenu.Button {
             this._proc.get_stdin_pipe().close(null);
         } catch (e) {
             this._proc = null;
-            this._addBubble('error', `Non riesco ad avviare Claude: ${e.message}`);
+            this._addBubble('error', `Non riesco ad avviare ${local ? 'Qwen' : 'Claude'}: ${e.message}`);
             this._setMode('error');
             return;
         }
@@ -1100,7 +1516,7 @@ class AninuxIndicator extends PanelMenu.Button {
         this._failed = false;
         this._stopBtn.visible = true;
         this._setMode('dance');
-        this._setStatus('Ci penso…');
+        this._setStatus(local ? 'Ci penso (Qwen, sul computer)…' : 'Ci penso…');
 
         const stream = new Gio.DataInputStream({
             base_stream: this._proc.get_stdout_pipe(), close_base_stream: true,
@@ -1141,6 +1557,18 @@ class AninuxIndicator extends PanelMenu.Button {
             this._saveChat();
         }
 
+        if (ev.type === 'aninux_partial') {
+            // Qwen scrive la risposta un pezzo alla volta
+            const t = String(ev.text ?? '').trim();
+            if (!t)
+                return;
+            const shown = this._replyText ? `${this._replyText}\n\n${t}` : t;
+            if (!this._reply)
+                this._reply = this._addBubble('bot', shown);
+            else
+                this._setBubbleText(this._reply, shown);
+            return;
+        }
         if (ev.type === 'assistant' && ev.message?.content) {
             for (const c of ev.message.content) {
                 if (c.type === 'text' && c.text?.trim()) {
@@ -1555,6 +1983,25 @@ class AninuxIndicator extends PanelMenu.Button {
     }
 
     destroy() {
+        if (this._preloadId) {
+            GLib.source_remove(this._preloadId);
+            this._preloadId = 0;
+        }
+        if (this._panelStyleId) {
+            Main.panel.disconnect(this._panelStyleId);
+            this._panelStyleId = 0;
+        }
+        if (this._focusAppId) {
+            Shell.WindowTracker.get_default().disconnect(this._focusAppId);
+            this._focusAppId = 0;
+        }
+        if (this._recentSaveId) {
+            GLib.source_remove(this._recentSaveId);
+            this._recentSaveId = 0;
+            try {
+                GLib.file_set_contents(RECENT_FILE, JSON.stringify(this._recentIds));
+            } catch (_e) {}
+        }
         this._stop(false);
         this._voiceQuit();
         if (this._voiceSettingsId) {

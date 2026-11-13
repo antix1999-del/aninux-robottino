@@ -1,5 +1,11 @@
 .bit-popup { width: 460px; padding: 6px 4px; }
-.bit-header { spacing: 12px; padding-bottom: 8px; }
+.bit-header { spacing: 6px; padding-bottom: 8px; }
+.bit-titles { spacing: 10px; padding: 0 4px; }
+.bit-robot-stage { }
+.bit-apps { spacing: 6px; padding: 4px 0 2px 0; }
+.bit-app { border-radius: 12px; padding: 6px; }
+.bit-app:hover, .bit-app:focus { background-color: rgba(255,255,255,0.14); }
+.bit-app:active { background-color: rgba(255,255,255,0.22); }
 .bit-name { font-weight: bold; font-size: 15pt; }
 .bit-status { font-size: 9.5pt; color: rgba(255,255,255,0.65); }
 .bit-scroll { max-height: 420px; }
@@ -32,3 +38,21 @@
 .bit-mic:hover { color: #fff; }
 .bit-mic-on { color: #ff5a5f; }
 .bit-mic-on:hover { color: #ff7b7f; }
+
+/* ---- Dynamic Island ---- */
+/* la pillola ha lo stesso colore della barra (trasparente) */
+.aninux-pill { background-color: transparent; border-radius: 999px; padding: 0 8px; }
+.aninux-island .popup-menu-content {
+  /* il colore vero viene copiato dalla barra in extension.js (_syncIslandColor) */
+  background-color: #000;
+  border: none;
+  border-radius: 34px;
+  padding: 12px 10px;
+  box-shadow: 0 12px 32px 0 rgba(0,0,0,0.55);
+}
+.aninux-island .bit-entry { background-color: rgba(255,255,255,0.09); border: none; }
+.aninux-island .bit-entry:focus { background-color: rgba(255,255,255,0.13); }
+.aninux-island .bit-button { background-color: rgba(255,255,255,0.10); }
+.aninux-island .bit-button:hover { background-color: rgba(255,255,255,0.18); }
+.aninux-island .bit-accept { background-color: rgba(46,194,126,0.85); }
+.aninux-island .bit-model-selected { background-color: rgba(53,132,228,0.85); }
