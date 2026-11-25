@@ -2100,164 +2100,7 @@ export default class AninuxExtension extends Extension {
             this._hostUpdate();   // il notch nasce un attimo dopo di noi e può spostarsi
             return GLib.SOURCE_CONTINUE;
         });
-        this._recId = Main.screenshotUI.connect('notify::screencast-in-progress', () => this._recUpdate());
-        this._recUpdate();
-        const fs = () => this._fsUpdate();
-        this._fsConns = [
-            [global.display, global.display.connect('in-fullscreen-changed', fs)],
-            [global.display, global.display.connect('notify::focus-window', fs)],
-            [global.window_manager, global.window_manager.connect('size-changed', fs)],
-            [global.window_manager, global.window_manager.connect('minimize', fs)],
-            [global.window_manager, global.window_manager.connect('unminimize', fs)],
-            [global.window_manager, global.window_manager.connect('destroy', fs)],
-            [global.window_manager, global.window_manager.connect('map', fs)],
-            [global.workspace_manager, global.workspace_manager.connect('active-workspace-changed', fs)],
-            [Main.overview, Main.overview.connect('showing', fs)],
-            [Main.overview, Main.overview.connect('hiding', fs)],
-            [Main.overview, Main.overview.connect('hidden', fs)],
-        ];
         this._hostUpdate();
-    }
-
-    // ---------- notch nascosto con un'app a schermo intero ----------
-    // sparisce quando c'è un'app a schermo intero e ricompare solo se il puntatore
-    // va in alto, vicino al notch; quando il puntatore si allontana sparisce di nuovo
-    // C'è davvero un'app a schermo intero / massimizzata (o la panoramica)?
-    _fsIsFull() {
-        const notch = this._notch;
-        const m = Main.layoutManager.primaryMonitor;
-        let full = false;
-        if (notch && Main.overview.visible)
-            full = true;
-        if (notch && m && !full) {
-            const mi = Main.layoutManager.primaryIndex;
-            const ws = global.workspace_manager.get_active_workspace();
-            full = global.get_window_actors().some(a => {
-                const w = a.meta_window;
-                return w && !w.minimized && w.get_monitor() === mi &&
-                    w.located_on_workspace(ws) &&
-                    w.get_window_type() === Meta.WindowType.NORMAL &&
-                    (w.is_fullscreen() || w.maximized_vertically);
-            });
-        }
-        return full;
-    }
-
-    _fsUpdate() {
-        const notch = this._notch;
-        const full = this._fsIsFull();
-        if (full && !this._fsHidden) {
-            this._fsHidden = true;
-            this._fsShown = false;
-            this._fsReactive = notch.reactive;
-            this._fsSet(false);
-            this._fsPoll = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 120, () => {
-                this._fsTick();
-                return GLib.SOURCE_CONTINUE;
-            });
-        } else if (!full && this._fsHidden) {
-            this._fsRestore();
-        }
-    }
-
-    _fsSet(show) {
-        const notch = this._notch;
-        if (!notch)
-            return;
-        this._fsShown = show;
-        notch.remove_transition?.('opacity');
-        notch.ease({opacity: show ? 255 : 0, duration: show ? 160 : 220,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD});
-        notch.reactive = show ? this._fsReactive : false;
-    }
-
-    _fsTick() {
-        const notch = this._notch;
-        if (!notch) {
-            this._fsRestore();
-            return;
-        }
-        // All'avvio può restare nascosto per uno stato vecchio (panoramica o
-        // finestra massimizzata che nel frattempo non c'è più) senza che arrivi
-        // un segnale: ricontrolla qui e, se non c'è più nulla a schermo intero, ricompare.
-        if (!this._fsIsFull()) {
-            this._fsRestore();
-            return;
-        }
-        // notifiche e avvisi: il notch deve restare visibile E cliccabile finché ci sono
-        if (notch._peekActive || notch._alertShowing || notch.isExpanded) {
-            if (!this._fsShown || !notch.reactive)
-                this._fsSet(true);
-            return;
-        }
-        const [px, py] = global.get_pointer();
-        const cx = notch.x + notch.width / 2;
-        const near = Math.abs(px - cx) <= Math.max(notch.width / 2, 120) + 40;
-        if (!this._fsShown) {
-            if (py <= 2 && near && !Main.overview.visible)
-                this._fsSet(true);
-        } else if (Main.overview.visible || (!notch.isExpanded && !this._indicator?.menu.isOpen &&
-                   (py > notch.y + notch.height + 40 || !near))) {
-            this._fsSet(false);
-        }
-    }
-
-    _fsRestore() {
-        if (this._fsPoll) {
-            GLib.source_remove(this._fsPoll);
-            this._fsPoll = 0;
-        }
-        const notch = this._notch;
-        if (notch && this._fsHidden) {
-            notch.remove_transition?.('opacity');
-            notch.ease({opacity: 255, duration: 160, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
-            notch.reactive = this._fsReactive ?? true;
-        }
-        this._fsHidden = false;
-        this._fsShown = false;
-    }
-
-    // ---------- stop della registrazione schermo ----------
-    // l'indicatore di GNOME sta nella barra (nascosta): qui un pulsante rosso accanto al notch
-    _recUpdate() {
-        const on = Main.screenshotUI?.screencast_in_progress && !Main.layoutManager.panelBox.visible;
-        if (on && !this._recBtn) {
-            this._recBtn = new St.Button({
-                style_class: 'aninux-rec-stop', reactive: true, can_focus: true, track_hover: true,
-                label: '⏹  Stop registrazione',
-            });
-            this._recBtn.connect('clicked', () => Main.screenshotUI.stopScreencast());
-            Main.layoutManager.addTopChrome(this._recBtn, {trackFullscreen: false});
-            this._recTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                this._recPlace();
-                return GLib.SOURCE_CONTINUE;
-            });
-            this._recPlace();
-        } else if (!on && this._recBtn) {
-            this._recRemove();
-        }
-    }
-
-    _recPlace() {
-        const b = this._recBtn, m = Main.layoutManager.primaryMonitor;
-        if (!b || !m)
-            return;
-        const n = this._notch;
-        const x = n ? n.x + n.width + 8 : m.x + m.width / 2 + 170;
-        b.set_position(Math.round(Math.min(x, m.x + m.width - b.width - 4)), m.y + 6);
-        Main.layoutManager.uiGroup.set_child_above_sibling(b, null);
-    }
-
-    _recRemove() {
-        if (this._recTimer) {
-            GLib.source_remove(this._recTimer);
-            this._recTimer = 0;
-        }
-        if (this._recBtn) {
-            Main.layoutManager.removeChrome(this._recBtn);
-            this._recBtn.destroy();
-            this._recBtn = null;
-        }
     }
 
     _findNotch() {
@@ -2288,27 +2131,11 @@ export default class AninuxExtension extends Extension {
                 return orig.call(this) + box.get_preferred_width(-1)[1] + 10;
             };
             notch._aninuxOrigPillWidth = orig;
-            // i banner normali di GNOME (notifiche critiche ecc.) devono stare SOPRA il notch
-            // e appena sotto di lui, altrimenti il notch li copre e si prende i clic
-            const above = () => {
-                const tray = Main.messageTray;
-                const parent = notch.get_parent();
-                if (tray && parent && tray.get_parent() === parent)
-                    parent.set_child_above_sibling(tray, notch);
-            };
-            const origRaise = notch._raiseToTop;
-            notch._aninuxOrigRaise = origRaise;
-            notch._raiseToTop = function (...args) {
-                const r = origRaise.apply(this, args);
-                above();
-                return r;
-            };
-            above();
-            this._bannerMargin = Main.messageTray._bannerBin.translation_y;
-            Main.messageTray._bannerBin.translation_y = 54;
+            // il notch si nasconde con le app a schermo intero (lo fa NotchNux):
+            // mentre il menu del robottino è aperto deve restare visibile
+            notch._externalHold = () => !!this._indicator?.menu.isOpen;
             notch._applyPillWidth?.();
             this._hostIds = [box.connect('notify::width', () => this._notch?._applyPillWidth?.())];
-            this._fsUpdate();
         } else if (this._notch && (!hidden || !notch)) {
             this._hostRelease();
         }
@@ -2318,18 +2145,12 @@ export default class AninuxExtension extends Extension {
         const notch = this._notch;
         if (!notch)
             return;
-        this._fsRestore();
         const ind = this._indicator;
         const box = ind?.container;
         for (const id of this._hostIds ?? [])
             try { box.disconnect(id); } catch (_e) {}
         this._hostIds = null;
-        if (notch._aninuxOrigRaise) {
-            notch._raiseToTop = notch._aninuxOrigRaise;
-            delete notch._aninuxOrigRaise;
-        }
-        if (Main.messageTray?._bannerBin)
-            Main.messageTray._bannerBin.translation_y = this._bannerMargin ?? 0;
+        delete notch._externalHold;
         if (notch._aninuxOrigPillWidth) {
             notch._pillWidth = notch._aninuxOrigPillWidth;
             delete notch._aninuxOrigPillWidth;
@@ -2355,14 +2176,6 @@ export default class AninuxExtension extends Extension {
             Main.layoutManager.panelBox.disconnect(this._panelVisId);
             this._panelVisId = 0;
         }
-        if (this._recId) {
-            Main.screenshotUI.disconnect(this._recId);
-            this._recId = 0;
-        }
-        this._recRemove();
-        for (const [obj, id] of this._fsConns ?? [])
-            obj.disconnect(id);
-        this._fsConns = null;
         this._hostRelease();
         Main.wm.removeKeybinding('open-assistant');
         Main.wm.removeKeybinding('listen-assistant');
