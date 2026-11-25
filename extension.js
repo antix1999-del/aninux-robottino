@@ -22,7 +22,8 @@ const CHAT_FILE = GLib.build_filenamev([DATA_DIR, 'chat.json']);
 const MAX_SAVED = 80;
 
 const STAGE_W = 150;          // larghezza dello spazio nella barra
-const SPRITE = 26;            // altezza del robottino nella barra
+const NOTCH_STAGE_W = 50;     // spazio del robottino quando sta dentro il notch
+const SPRITE = 30;            // altezza del robottino nella barra
 const BIG_SPRITE = 56;        // altezza del robottino dentro la Dynamic Island
 const RECENT_FILE = GLib.build_filenamev([DATA_DIR, 'app-recenti.json']);
 const MAX_APPS = 4;           // icone delle app recenti nella Dynamic Island
@@ -500,6 +501,7 @@ class AninuxIndicator extends PanelMenu.Button {
         this._voiceQuestion = false; // l'ultima domanda è arrivata a voce
         this._afterSpeak = 'idle';
 
+        this._stageW = STAGE_W;
         this._buildStage();
         this._buildPopup();
         this._setupIsland();
@@ -542,18 +544,26 @@ class AninuxIndicator extends PanelMenu.Button {
         this.menu.connect('open-state-changed', (_m, open) => this._onMenuToggled(open));
     }
 
+    _setStageWidth(w) {
+        this._stageW = w;
+        this._stage.width = w;
+        this._x = Math.max(0, Math.min(w - SPRITE, this._x));
+        this._sprite.translation_x = this._x;
+        this._mirrorSprite?.();
+    }
+
     // ---------- lo spazio nella barra ----------
     _buildStage() {
         this._stage = new St.Widget({
             layout_manager: new Clutter.FixedLayout(),
-            width: STAGE_W, height: SPRITE,
+            width: this._stageW, height: SPRITE,
             y_align: Clutter.ActorAlign.CENTER,
             style_class: 'aninux-stage',
         });
         this._sprite = this._spriteBox(SPRITE);
         this._sprite.set_pivot_point(0.5, 0.5);
         this._stage.add_child(this._sprite);
-        this._x = (STAGE_W - SPRITE) / 2;
+        this._x = (this._stageW - SPRITE) / 2;
         this._sprite.translation_x = this._x;
         // la "pillola" nera nella barra: la Dynamic Island da chiusa
         this._pill = new St.Bin({
@@ -580,13 +590,13 @@ class AninuxIndicator extends PanelMenu.Button {
         const pillState = () => {
             let [pw, ph] = this._pill.get_transformed_size();
             if (!pw || !ph)
-                [pw, ph] = [STAGE_W + 16, SPRITE];
+                [pw, ph] = [this._stageW + 16, SPRITE];
             const [, natW] = bp.get_preferred_width(-1);
             const [, natH] = bp.get_preferred_height(natW);
             return {
                 scale_x: Math.min(1, pw / Math.max(natW, 1)),
                 scale_y: Math.min(1, ph / Math.max(natH, 1)),
-                translation_y: -((Main.panel.height + ph) / 2 + GAP),
+                translation_y: -(((this._hosted ? ph : Main.panel.height) + ph) / 2 + GAP),
             };
         };
 
@@ -757,7 +767,7 @@ class AninuxIndicator extends PanelMenu.Button {
     }
 
     _walkTo(x, speed, done) {
-        x = Math.max(0, Math.min(STAGE_W - SPRITE, x));
+        x = Math.max(0, Math.min(this._stageW - SPRITE, x));
         const dist = Math.abs(x - this._x);
         if (dist < 3) {
             done?.();
@@ -821,7 +831,7 @@ class AninuxIndicator extends PanelMenu.Button {
         const next = () => this._after(rand(2500, 7000), () => this._idleLoop());
         const r = Math.random();
         if (r < 0.40) {
-            this._walkTo(rand(0, STAGE_W - SPRITE), rand(18, 30), next);
+            this._walkTo(rand(0, this._stageW - SPRITE), rand(18, 30), next);
         } else if (r < 0.52) {
             this._wave(1400, next);
         } else if (r < 0.64) {
@@ -841,7 +851,7 @@ class AninuxIndicator extends PanelMenu.Button {
     _thinkLoop() {
         if (this._mode !== 'thinking')
             return;
-        this._walkTo(rand(0, STAGE_W - SPRITE), 14, () => this._after(rand(300, 900), () => this._thinkLoop()));
+        this._walkTo(rand(0, this._stageW - SPRITE), 14, () => this._after(rand(300, 900), () => this._thinkLoop()));
     }
 
     _setMode(mode) {
@@ -874,7 +884,7 @@ class AninuxIndicator extends PanelMenu.Button {
             // balletto quando riceve una domanda, poi si mette a pensare
             this._setExpr('happy');
             const moves = ['wave', 'jump', 'walk1', 'wave', 'jump', 'walk2'];
-            const baseX = Math.max(3, Math.min(STAGE_W - SPRITE - 3, this._x));
+            const baseX = Math.max(3, Math.min(this._stageW - SPRITE - 3, this._x));
             let beat = 0;
             this._every(240, () => {
                 this._setPose(moves[beat % moves.length]);
@@ -1241,7 +1251,7 @@ class AninuxIndicator extends PanelMenu.Button {
         if (!this._bigSprite)
             return;
         const room = Math.max(0, this._bigStage.width - BIG_SPRITE);
-        const frac = this._sprite.translation_x / Math.max(1, STAGE_W - SPRITE);
+        const frac = this._sprite.translation_x / Math.max(1, this._stageW - SPRITE);
         this._bigSprite.translation_x = frac * room;
         this._bigSprite.translation_y = 3 + this._sprite.translation_y * (BIG_SPRITE / SPRITE);
         this._bigSprite.scale_x = this._sprite.scale_x;
@@ -1359,7 +1369,7 @@ class AninuxIndicator extends PanelMenu.Button {
         const [bx] = btn.get_transformed_position();
         const room = Math.max(1, this._bigStage.width - BIG_SPRITE);
         const target = bx + btn.width / 2 - sx - BIG_SPRITE / 2;
-        const barX = Math.max(0, Math.min(1, target / room)) * (STAGE_W - SPRITE);
+        const barX = Math.max(0, Math.min(1, target / room)) * (this._stageW - SPRITE);
         this._clearTimers();
         this._walkTo(barX, 90, () => {
             this._setPose('wave');
@@ -2056,6 +2066,8 @@ export default class AninuxExtension extends Extension {
         this._widthId = this._indicator.container.connect('notify::width', sync);
         sync();
 
+        this._hostSetup();
+
         Main.wm.addKeybinding('open-assistant', this.getSettings(),
             Meta.KeyBindingFlags.NONE,
             Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW,
@@ -2078,7 +2090,280 @@ export default class AninuxExtension extends Extension {
             });
     }
 
+    // ---------- accanto al notch (barra nascosta) ----------
+    // Se NotchNux nasconde la barra, il robottino esce dalla barra e va in una
+    // pillola nera attaccata al lato destro del notch; se la barra torna, rientra.
+    _hostSetup() {
+        const panelBox = Main.layoutManager.panelBox;
+        this._panelVisId = panelBox.connect('notify::visible', () => this._hostUpdate());
+        this._hostTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+            this._hostUpdate();   // il notch nasce un attimo dopo di noi e può spostarsi
+            return GLib.SOURCE_CONTINUE;
+        });
+        this._recId = Main.screenshotUI.connect('notify::screencast-in-progress', () => this._recUpdate());
+        this._recUpdate();
+        const fs = () => this._fsUpdate();
+        this._fsConns = [
+            [global.display, global.display.connect('in-fullscreen-changed', fs)],
+            [global.display, global.display.connect('notify::focus-window', fs)],
+            [global.window_manager, global.window_manager.connect('size-changed', fs)],
+            [global.window_manager, global.window_manager.connect('minimize', fs)],
+            [global.window_manager, global.window_manager.connect('unminimize', fs)],
+            [global.window_manager, global.window_manager.connect('destroy', fs)],
+            [global.window_manager, global.window_manager.connect('map', fs)],
+            [global.workspace_manager, global.workspace_manager.connect('active-workspace-changed', fs)],
+            [Main.overview, Main.overview.connect('showing', fs)],
+            [Main.overview, Main.overview.connect('hiding', fs)],
+            [Main.overview, Main.overview.connect('hidden', fs)],
+        ];
+        this._hostUpdate();
+    }
+
+    // ---------- notch nascosto con un'app a schermo intero ----------
+    // sparisce quando c'è un'app a schermo intero e ricompare solo se il puntatore
+    // va in alto, vicino al notch; quando il puntatore si allontana sparisce di nuovo
+    // C'è davvero un'app a schermo intero / massimizzata (o la panoramica)?
+    _fsIsFull() {
+        const notch = this._notch;
+        const m = Main.layoutManager.primaryMonitor;
+        let full = false;
+        if (notch && Main.overview.visible)
+            full = true;
+        if (notch && m && !full) {
+            const mi = Main.layoutManager.primaryIndex;
+            const ws = global.workspace_manager.get_active_workspace();
+            full = global.get_window_actors().some(a => {
+                const w = a.meta_window;
+                return w && !w.minimized && w.get_monitor() === mi &&
+                    w.located_on_workspace(ws) &&
+                    w.get_window_type() === Meta.WindowType.NORMAL &&
+                    (w.is_fullscreen() || w.maximized_vertically);
+            });
+        }
+        return full;
+    }
+
+    _fsUpdate() {
+        const notch = this._notch;
+        const full = this._fsIsFull();
+        if (full && !this._fsHidden) {
+            this._fsHidden = true;
+            this._fsShown = false;
+            this._fsReactive = notch.reactive;
+            this._fsSet(false);
+            this._fsPoll = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 120, () => {
+                this._fsTick();
+                return GLib.SOURCE_CONTINUE;
+            });
+        } else if (!full && this._fsHidden) {
+            this._fsRestore();
+        }
+    }
+
+    _fsSet(show) {
+        const notch = this._notch;
+        if (!notch)
+            return;
+        this._fsShown = show;
+        notch.remove_transition?.('opacity');
+        notch.ease({opacity: show ? 255 : 0, duration: show ? 160 : 220,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        notch.reactive = show ? this._fsReactive : false;
+    }
+
+    _fsTick() {
+        const notch = this._notch;
+        if (!notch) {
+            this._fsRestore();
+            return;
+        }
+        // All'avvio può restare nascosto per uno stato vecchio (panoramica o
+        // finestra massimizzata che nel frattempo non c'è più) senza che arrivi
+        // un segnale: ricontrolla qui e, se non c'è più nulla a schermo intero, ricompare.
+        if (!this._fsIsFull()) {
+            this._fsRestore();
+            return;
+        }
+        // notifiche e avvisi: il notch deve restare visibile E cliccabile finché ci sono
+        if (notch._peekActive || notch._alertShowing || notch.isExpanded) {
+            if (!this._fsShown || !notch.reactive)
+                this._fsSet(true);
+            return;
+        }
+        const [px, py] = global.get_pointer();
+        const cx = notch.x + notch.width / 2;
+        const near = Math.abs(px - cx) <= Math.max(notch.width / 2, 120) + 40;
+        if (!this._fsShown) {
+            if (py <= 2 && near && !Main.overview.visible)
+                this._fsSet(true);
+        } else if (Main.overview.visible || (!notch.isExpanded && !this._indicator?.menu.isOpen &&
+                   (py > notch.y + notch.height + 40 || !near))) {
+            this._fsSet(false);
+        }
+    }
+
+    _fsRestore() {
+        if (this._fsPoll) {
+            GLib.source_remove(this._fsPoll);
+            this._fsPoll = 0;
+        }
+        const notch = this._notch;
+        if (notch && this._fsHidden) {
+            notch.remove_transition?.('opacity');
+            notch.ease({opacity: 255, duration: 160, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            notch.reactive = this._fsReactive ?? true;
+        }
+        this._fsHidden = false;
+        this._fsShown = false;
+    }
+
+    // ---------- stop della registrazione schermo ----------
+    // l'indicatore di GNOME sta nella barra (nascosta): qui un pulsante rosso accanto al notch
+    _recUpdate() {
+        const on = Main.screenshotUI?.screencast_in_progress && !Main.layoutManager.panelBox.visible;
+        if (on && !this._recBtn) {
+            this._recBtn = new St.Button({
+                style_class: 'aninux-rec-stop', reactive: true, can_focus: true, track_hover: true,
+                label: '⏹  Stop registrazione',
+            });
+            this._recBtn.connect('clicked', () => Main.screenshotUI.stopScreencast());
+            Main.layoutManager.addTopChrome(this._recBtn, {trackFullscreen: false});
+            this._recTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                this._recPlace();
+                return GLib.SOURCE_CONTINUE;
+            });
+            this._recPlace();
+        } else if (!on && this._recBtn) {
+            this._recRemove();
+        }
+    }
+
+    _recPlace() {
+        const b = this._recBtn, m = Main.layoutManager.primaryMonitor;
+        if (!b || !m)
+            return;
+        const n = this._notch;
+        const x = n ? n.x + n.width + 8 : m.x + m.width / 2 + 170;
+        b.set_position(Math.round(Math.min(x, m.x + m.width - b.width - 4)), m.y + 6);
+        Main.layoutManager.uiGroup.set_child_above_sibling(b, null);
+    }
+
+    _recRemove() {
+        if (this._recTimer) {
+            GLib.source_remove(this._recTimer);
+            this._recTimer = 0;
+        }
+        if (this._recBtn) {
+            Main.layoutManager.removeChrome(this._recBtn);
+            this._recBtn.destroy();
+            this._recBtn = null;
+        }
+    }
+
+    _findNotch() {
+        return Main.layoutManager.uiGroup.get_children()
+            .flatMap(c => [c, ...(c.get_children?.() ?? [])])
+            .find(a => a.constructor?.$gtype?.name?.includes('NotchNux'));
+    }
+
+    // il robottino diventa una zona dentro la pillola del notch (a sinistra dell'orologio)
+    _hostUpdate() {
+        const ind = this._indicator;
+        if (!ind)
+            return;
+        const hidden = !Main.layoutManager.panelBox.visible;
+        const notch = hidden ? this._findNotch() : null;
+        if (hidden && notch?._pill && !this._notch) {
+            this._notch = notch;
+            this._spacer?.hide();
+            const box = ind.container;
+            box.get_parent()?.remove_child(box);
+            notch._pill.insert_child_at_index(box, 0);
+            ind._hosted = true;
+            ind._pill.add_style_class_name('aninux-pill-hosted');
+            ind._setStageWidth(NOTCH_STAGE_W);
+            // la pillola del notch deve fare posto al robottino
+            const orig = notch._pillWidth;
+            notch._pillWidth = function () {
+                return orig.call(this) + box.get_preferred_width(-1)[1] + 10;
+            };
+            notch._aninuxOrigPillWidth = orig;
+            // i banner normali di GNOME (notifiche critiche ecc.) devono stare SOPRA il notch
+            // e appena sotto di lui, altrimenti il notch li copre e si prende i clic
+            const above = () => {
+                const tray = Main.messageTray;
+                const parent = notch.get_parent();
+                if (tray && parent && tray.get_parent() === parent)
+                    parent.set_child_above_sibling(tray, notch);
+            };
+            const origRaise = notch._raiseToTop;
+            notch._aninuxOrigRaise = origRaise;
+            notch._raiseToTop = function (...args) {
+                const r = origRaise.apply(this, args);
+                above();
+                return r;
+            };
+            above();
+            this._bannerMargin = Main.messageTray._bannerBin.translation_y;
+            Main.messageTray._bannerBin.translation_y = 54;
+            notch._applyPillWidth?.();
+            this._hostIds = [box.connect('notify::width', () => this._notch?._applyPillWidth?.())];
+            this._fsUpdate();
+        } else if (this._notch && (!hidden || !notch)) {
+            this._hostRelease();
+        }
+    }
+
+    _hostRelease() {
+        const notch = this._notch;
+        if (!notch)
+            return;
+        this._fsRestore();
+        const ind = this._indicator;
+        const box = ind?.container;
+        for (const id of this._hostIds ?? [])
+            try { box.disconnect(id); } catch (_e) {}
+        this._hostIds = null;
+        if (notch._aninuxOrigRaise) {
+            notch._raiseToTop = notch._aninuxOrigRaise;
+            delete notch._aninuxOrigRaise;
+        }
+        if (Main.messageTray?._bannerBin)
+            Main.messageTray._bannerBin.translation_y = this._bannerMargin ?? 0;
+        if (notch._aninuxOrigPillWidth) {
+            notch._pillWidth = notch._aninuxOrigPillWidth;
+            delete notch._aninuxOrigPillWidth;
+        }
+        if (ind && box) {
+            box.get_parent()?.remove_child(box);
+            Main.panel._centerBox.insert_child_at_index(box, 0);
+            ind._hosted = false;
+            ind._pill?.remove_style_class_name('aninux-pill-hosted');
+            ind._setStageWidth(STAGE_W);
+            this._spacer?.show();
+        }
+        try { notch._applyPillWidth?.(); } catch (_e) {}
+        this._notch = null;
+    }
+
     disable() {
+        if (this._hostTimer) {
+            GLib.source_remove(this._hostTimer);
+            this._hostTimer = 0;
+        }
+        if (this._panelVisId) {
+            Main.layoutManager.panelBox.disconnect(this._panelVisId);
+            this._panelVisId = 0;
+        }
+        if (this._recId) {
+            Main.screenshotUI.disconnect(this._recId);
+            this._recId = 0;
+        }
+        this._recRemove();
+        for (const [obj, id] of this._fsConns ?? [])
+            obj.disconnect(id);
+        this._fsConns = null;
+        this._hostRelease();
         Main.wm.removeKeybinding('open-assistant');
         Main.wm.removeKeybinding('listen-assistant');
         this._dbus?.unexport();

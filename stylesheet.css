@@ -42,6 +42,7 @@
 /* ---- Dynamic Island ---- */
 /* la pillola ha lo stesso colore della barra (trasparente) */
 .aninux-pill { background-color: transparent; border-radius: 999px; padding: 0 8px; }
+.aninux-pill-hosted { background-color: transparent; padding: 0 2px; }
 .aninux-island .popup-menu-content {
   /* il colore vero viene copiato dalla barra in extension.js (_syncIslandColor) */
   background-color: #000;
@@ -56,3 +57,7 @@
 .aninux-island .bit-button:hover { background-color: rgba(255,255,255,0.18); }
 .aninux-island .bit-accept { background-color: rgba(46,194,126,0.85); }
 .aninux-island .bit-model-selected { background-color: rgba(53,132,228,0.85); }
+
+.aninux-rec-stop { background-color: #e5484d; color: white; font-weight: bold; font-size: 14px;
+  border-radius: 999px; padding: 6px 16px; }
+.aninux-rec-stop:hover { background-color: #ff5a60; }

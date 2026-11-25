@@ -32,7 +32,7 @@ SESS_DIR = os.path.join(DATA_DIR, 'qwen')
 KEEP_MESSAGES = 16      # messaggi ricordati tra una domanda e l'altra
 MAX_ROUNDS = 6          # giri di strumenti per domanda
 TOOL_OUT = 2500         # caratteri massimi del risultato di uno strumento
-NUM_CTX = 6144          # contesto: più grande = più RAM
+NUM_CTX = 4096          # contesto: più grande = più RAM (6144 occupava 3,6 GB)
 
 SECRETS = [os.path.join(HOME, p) for p in ('.ssh', '.gnupg', '.local/share/keyrings', '.claude/.credentials.json')]
 SECRETS += ['/etc/shadow', '/etc/gshadow']
@@ -615,7 +615,8 @@ class OllamaError(Exception):
 def chat(messages, on_text):
     body = json.dumps({
         'model': MODEL, 'messages': messages, 'tools': tool_specs(), 'stream': True,
-        'keep_alive': '15m', 'options': {'num_ctx': NUM_CTX, 'temperature': 0.2},
+        'think': False,  # i Qwen3 "ibridi" (es. 1.7b) altrimenti ragionano a lungo prima di rispondere
+        'keep_alive': '5m', 'options': {'num_ctx': NUM_CTX, 'temperature': 0.2},
     }).encode()
     req = urllib.request.Request(f'{OLLAMA}/api/chat', data=body, headers={'Content-Type': 'application/json'})
     text, calls = '', []
@@ -937,7 +938,10 @@ def main():
     ap.add_argument('--domanda')
     ap.add_argument('--nome', default='')
     ap.add_argument('--sessione', default='')
+    ap.add_argument('--modello', default='', help='modello di Ollama (predefinito: %s)' % MODEL)
     args = ap.parse_args()
+    if args.modello:
+        globals()['MODEL'] = args.modello
     nome = args.nome
     if not nome:
         try:
